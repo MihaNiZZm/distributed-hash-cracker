@@ -1,0 +1,60 @@
+plugins {
+	id 'java'
+	id 'org.springframework.boot' version '3.4.4'
+	id 'io.spring.dependency-management' version '1.1.7'
+}
+
+group = 'ru.mihanizzm'
+version = '0.0.1-SNAPSHOT'
+
+java {
+	toolchain {
+		languageVersion = JavaLanguageVersion.of(21)
+	}
+}
+
+configurations {
+	compileOnly {
+		extendsFrom annotationProcessor
+	}
+}
+
+repositories {
+	mavenCentral()
+}
+
+dependencies {
+	implementation 'org.springframework.boot:spring-boot-starter-web'
+	implementation 'org.springframework.boot:spring-boot-starter-web-services'
+	implementation 'commons-codec:commons-codec:1.15'
+	implementation 'javax.xml.bind:jaxb-api:2.3.1'
+	implementation 'org.apache.httpcomponents:httpclient:4.5.13'
+	compileOnly 'org.projectlombok:lombok'
+	annotationProcessor 'org.projectlombok:lombok'
+	testImplementation 'org.springframework.boot:spring-boot-starter-test'
+	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+bootJar {
+	destinationDirectory = file("$projectDir/build/libs")
+	archiveFileName = "worker.jar"
+
+	doFirst {
+		mkdir destinationDirectory
+	}
+
+	duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+	from {
+		configurations.runtimeClasspath.collect {
+			it.isDirectory() ? it : zipTree(it)
+		}
+	}
+}
+
+jar {
+	enabled = false
+}
+
+tasks.named('test') {
+	useJUnitPlatform()
+}

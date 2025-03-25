@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  manager:
+    build: ./HashCrackerManager
+    ports:
+      - "8080:8080"
+    networks:
+      - crackhash-network
+
+  worker:
+    build: ./HashCrackerWorker
+    networks:
+      - crackhash-network
+
+networks:
+  crackhash-network:
