@@ -1,5 +1,6 @@
 package ru.mihanizzm.hashcrackerworker.service;
 
+import lombok.RequiredArgsConstructor;
 import org.apache.commons.codec.digest.DigestUtils;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
@@ -10,12 +11,9 @@ import java.util.ArrayList;
 import java.util.List;
 
 @Service
+@RequiredArgsConstructor
 public class HashCracker {
     private final RestTemplate restTemplate;
-
-    public HashCracker(RestTemplate restTemplate) {
-        this.restTemplate = restTemplate;
-    }
 
     public void processTask(HashCrackTask task) {
         new Thread(() -> {
@@ -64,7 +62,7 @@ public class HashCracker {
         response.setData(result.foundWords());
 
         restTemplate.patchForObject(
-                "http://localhost:8080/internal/api/manager/hash/crack/request",
+                "http://manager/internal/api/manager/hash/crack/request",
                 response,
                 Void.class
         );

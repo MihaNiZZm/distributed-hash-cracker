@@ -10,8 +10,11 @@ services:
 
   worker:
     build: ./HashCrackerWorker
+    ports:
+      - "8081:8081"
     networks:
       - crackhash-network
 
 networks:
   crackhash-network:
+    driver: bridge

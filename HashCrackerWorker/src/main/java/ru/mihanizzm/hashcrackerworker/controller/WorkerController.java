@@ -1,5 +1,6 @@
 package ru.mihanizzm.hashcrackerworker.controller;
 
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -10,12 +11,9 @@ import ru.mihanizzm.hashcrackerworker.service.HashCracker;
 
 @RestController
 @RequestMapping("/internal/api/worker")
+@RequiredArgsConstructor
 public class WorkerController {
     private final HashCracker hashCracker;
-
-    public WorkerController(HashCracker hashCracker) {
-        this.hashCracker = hashCracker;
-    }
 
     @PostMapping(value = "/hash/crack/task", consumes = MediaType.APPLICATION_XML_VALUE)
     public void handleTask(@RequestBody HashCrackTask task) {
