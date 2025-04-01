@@ -62,7 +62,7 @@ public class HashCracker {
         response.setData(result.foundWords());
 
         restTemplate.patchForObject(
-                "http://manager/internal/api/manager/hash/crack/request",
+                "http://manager:8080/internal/api/manager/hash/crack/request",
                 response,
                 Void.class
         );

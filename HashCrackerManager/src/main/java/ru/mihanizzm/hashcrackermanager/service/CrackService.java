@@ -58,7 +58,7 @@ public class CrackService {
     }
 
     private void sendTaskToWorker(HashCrackTask task) {
-        String workerUrl = "http://worker/internal/api/worker/hash/crack/task";
+        String workerUrl = "http://worker:8081/internal/api/worker/hash/crack/task";
         restTemplate.postForEntity(workerUrl, task, Void.class);
     }
 
