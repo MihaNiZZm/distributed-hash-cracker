@@ -1,0 +1,15 @@
+spring:
+  application:
+    name: HashCrackerWorker
+  rabbitmq:
+    host: rabbitmq
+    port: 5672
+    username: guest
+    password: guest
+  data:
+    mongodb:
+      uri: mongodb://mongo1:27017,mongo2:27017,mongo3:27017/crackhash?replicaSet=rs0
+
+server:
+  address: 0.0.0.0
+  port: 8081

@@ -7,6 +7,7 @@ import lombok.NoArgsConstructor;
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-public class CrackResponse {
-    private String requestId;
+public class CrackRequest {
+    private String hash;
+    private int maxLength;
 }

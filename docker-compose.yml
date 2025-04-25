@@ -1,20 +1,126 @@
-version: '3.8'
+version: "3.8"
 
 services:
   manager:
     build: ./HashCrackerManager
     ports:
       - "8080:8080"
-    networks:
-      - crackhash-network
+    environment:
+      - SPRING_DATA_MONGODB_URI=mongodb://mongo1:27017,mongo2:27017,mongo3:27017/crackdb?replicaSet=rs0&w=majority
+      - SPRING_RABBITMQ_HOST=rabbitmq
+      - SPRING_RABBITMQ_PORT=5672
+      - SPRING_RABBITMQ_USERNAME=user
+      - SPRING_RABBITMQ_PASSWORD=password
+    depends_on:
+      - rabbitmq
+      - mongo1
+      - mongo2
+      - mongo3
 
-  worker:
+  worker1:
     build: ./HashCrackerWorker
-    ports:
-      - "8081:8081"
-    networks:
-      - crackhash-network
+    environment:
+      - SPRING_DATA_MONGODB_URI=mongodb://mongo1:27017,mongo2:27017,mongo3:27017/crackdb?replicaSet=rs0&w=majority
+      - SPRING_RABBITMQ_HOST=rabbitmq
+      - SPRING_RABBITMQ_PORT=5672
+      - SPRING_RABBITMQ_USERNAME=user
+      - SPRING_RABBITMQ_PASSWORD=password
+    depends_on:
+      - rabbitmq
+      - mongo1
+      - mongo2
+      - mongo3
 
-networks:
-  crackhash-network:
-    driver: bridge
+  worker2:
+    build: ./HashCrackerWorker
+    environment:
+      - SPRING_DATA_MONGODB_URI=mongodb://mongo1:27017,mongo2:27017,mongo3:27017/crackdb?replicaSet=rs0&w=majority
+      - SPRING_RABBITMQ_HOST=rabbitmq
+      - SPRING_RABBITMQ_PORT=5672
+      - SPRING_RABBITMQ_USERNAME=user
+      - SPRING_RABBITMQ_PASSWORD=password
+    depends_on:
+      - rabbitmq
+      - mongo1
+      - mongo2
+      - mongo3
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      - RABBITMQ_DEFAULT_USER=user
+      - RABBITMQ_DEFAULT_PASS=password
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+
+  mongo1:
+    image: mongo:5
+    command: --replSet rs0
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo1_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongo", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+
+  mongo2:
+    image: mongo:5
+    command: --replSet rs0
+    ports:
+      - "27018:27017"
+    volumes:
+      - mongo2_data:/data/db
+
+  mongo3:
+    image: mongo:5
+    command: --replSet rs0
+    ports:
+      - "27019:27017"
+    volumes:
+      - mongo3_data:/data/db
+
+  mongosetup:
+    image: mongo:5
+    restart: "no"
+    depends_on:
+      - mongo1
+      - mongo2
+      - mongo3
+    entrypoint: >
+      bash -c "
+        sleep 5 && \
+        mongo --host mongo1:27017 --eval '
+          rs.initiate({
+            _id: \"rs0\",
+            members: [
+              {_id: 0, host: \"mongo1:27017\", priority: 1},
+              {_id: 1, host: \"mongo2:27017\", priority: 5},
+              {_id: 2, host: \"mongo3:27017\", priority: 3}
+            ]
+          }) || rs.status()
+        '
+      "
+
+  mongoelect:
+    image: mongo:5
+    depends_on:
+      - mongo1
+      - mongo2
+      - mongo3
+    entrypoint: >
+      bash -c "
+        sleep 20 && \
+        mongo --host mongo1:27017 --eval 'rs.stepDown()'
+      "
+
+volumes:
+  mongo1_data:
+  mongo2_data:
+  mongo3_data:
+  rabbitmq_data:

@@ -1,77 +1,159 @@
 package ru.mihanizzm.hashcrackermanager.service;
 
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestTemplate;
-import ru.mihanizzm.hashcrackermanager.dto.HashCrackResult;
-import ru.mihanizzm.hashcrackermanager.dto.HashCrackTask;
-import ru.mihanizzm.hashcrackermanager.model.CrackRequest;
+import org.springframework.transaction.annotation.Transactional;
+import ru.mihanizzm.hashcrackermanager.config.RabbitMQConfig;
+import ru.mihanizzm.hashcrackermanager.dto.CrackRequest;
+import ru.mihanizzm.hashcrackermanager.dto.CrackResponse;
+import ru.mihanizzm.hashcrackermanager.dto.CrackStatusResponse;
+import ru.mihanizzm.hashcrackermanager.model.CrackStatus;
+import ru.mihanizzm.hashcrackermanager.model.CrackSubTask;
+import ru.mihanizzm.hashcrackermanager.model.CrackTask;
+import ru.mihanizzm.hashcrackermanager.msg.WorkerTaskRequest;
+import ru.mihanizzm.hashcrackermanager.msg.WorkerTaskResult;
+import ru.mihanizzm.hashcrackermanager.repository.CrackTaskRepository;
 
-import java.time.Duration;
-import java.time.Instant;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
 import java.util.UUID;
-import java.util.stream.IntStream;
 
 @Service
 @RequiredArgsConstructor
 public class CrackService {
-    private final RequestStorage requestStorage;
-    private final RestTemplate restTemplate;
+    private final CrackTaskRepository repository;
+    private final RabbitTemplate rabbitTemplate;
+    private final long expirationMillis = 60_000;
 
-    @Value("${worker.count:1}")
-    private int workerCount;
+    private final String alphabet = "abcdefghijklmnopqrstuvwxyz0123456789";
+    private final int workerCount = 2;
 
-    @Value("${request.timeout.minutes:10}")
-    private int requestTimeout;
-
-    public String processRequest(String hash, int maxLength) {
+    @Transactional
+    public CrackResponse startCrack(CrackRequest req) {
         String requestId = UUID.randomUUID().toString();
-        CrackRequest request = new CrackRequest(requestId, hash, maxLength, workerCount);
-        requestStorage.addRequest(request);
 
-        IntStream.range(0, workerCount).forEach(partNumber -> {
-            HashCrackTask task = new HashCrackTask();
-            task.setRequestId(requestId);
-            task.setHash(hash);
-            task.setLength(maxLength);
-            task.setPartCount(workerCount);
-            task.setPartNumber(partNumber);
+        List<CrackSubTask> subTasks = new ArrayList<>();
+        for (int i = 0; i < workerCount; i++) {
+            subTasks.add(CrackSubTask.builder()
+                    .partNumber(i)
+                    .sentToQueue(false)
+                    .completed(false)
+                    .build());
+        }
 
-            sendTaskToWorker(task);
-        });
+        CrackTask task = CrackTask.builder()
+                .requestId(requestId)
+                .hash(req.getHash())
+                .maxLength(req.getMaxLength())
+                .alphabet(alphabet)
+                .workerCount(workerCount)
+                .subTasks(subTasks)
+                .results(new HashSet<>())
+                .status(CrackStatus.IN_PROGRESS)
+                .createdAt(System.currentTimeMillis())
+                .build();
 
-        return requestId;
+        repository.save(task);
+
+        for (CrackSubTask chunk : subTasks) {
+            sendSubTaskToQueue(task, chunk);
+        }
+        repository.save(task);
+
+        return new CrackResponse(requestId);
     }
 
-    public void updateRequest(HashCrackResult result) {
-        CrackRequest request = requestStorage.getRequest(result.getRequestId());
-        if (request != null) {
-            request.getResults().addAll(result.getData());
-            request.getReceivedParts().add(result.getPartNumber());
+    @Transactional
+    public void handleWorkerResult(WorkerTaskResult result) {
+        CrackTask task = repository.findById(result.getRequestId()).orElse(null);
+        if (task == null) {
+            return;
+        }
 
-            if (request.getReceivedParts().size() == workerCount) {
-                request.setStatus(CrackRequest.Status.READY);
+        CrackSubTask chunk = task.getSubTasks().stream()
+                .filter(st -> st.getPartNumber() == result.getPartNumber())
+                .findFirst()
+                .orElse(null);
+        if (chunk == null || chunk.isCompleted()) {
+            return;
+        }
+
+        if (result.getResults() != null) {
+            chunk.getResults().addAll(result.getResults());
+        }
+
+        chunk.setCompleted(true);
+        task.getResults().addAll(chunk.getResults());
+
+        if (task.getSubTasks().stream().allMatch(CrackSubTask::isCompleted)) {
+            task.setStatus(CrackStatus.READY);
+        }
+        repository.save(task);
+    }
+
+    public CrackStatusResponse getStatus(String requestId) {
+        CrackTask task = repository.findById(requestId).orElse(null);
+        if (task == null) {
+            return new CrackStatusResponse("ERROR", null);
+        }
+
+        if (task.getStatus() == CrackStatus.READY) {
+            return new CrackStatusResponse("READY", new ArrayList<>(task.getResults()));
+        }
+
+        if (task.getStatus() == CrackStatus.IN_PROGRESS) {
+            return new CrackStatusResponse("IN_PROGRESS", null);
+        }
+
+        return new CrackStatusResponse("ERROR", null);
+    }
+
+    @Scheduled(fixedDelay = 10_000)
+    public void resendNotSentChunks() {
+        List<CrackTask> tasks = repository.findAllByStatus(CrackStatus.IN_PROGRESS);
+        for (CrackTask task : tasks) {
+            for (CrackSubTask chunk : task.getSubTasks()) {
+                if (!chunk.isSentToQueue() && !chunk.isCompleted()) {
+                    sendSubTaskToQueue(task, chunk);
+                }
+            }
+            repository.save(task);
+        }
+    }
+
+    @Scheduled(fixedDelay = 10_000)
+    public void markExpiredTasksAsError() {
+        long now = System.currentTimeMillis();
+        List<CrackTask> tasks = repository.findAllByStatus(CrackStatus.IN_PROGRESS);
+        for (CrackTask t : tasks) {
+            if (now - t.getCreatedAt() > expirationMillis) {
+                t.setStatus(CrackStatus.ERROR);
+                repository.save(t);
             }
         }
     }
 
-    private void sendTaskToWorker(HashCrackTask task) {
-        String workerUrl = "http://worker:8081/internal/api/worker/hash/crack/task";
-        restTemplate.postForEntity(workerUrl, task, Void.class);
-    }
-
-    @Scheduled(fixedRate = 60_000)
-    public void checkTimeouts() {
-        requestStorage.getAllRequests().forEach(request -> {
-            if (Duration.between(request.getCreated(), Instant.now()).toMinutes() > requestTimeout) {
-                request.setStatus(CrackRequest.Status.ERROR);
-            }
-        });
-    }
-
-    public CrackRequest getRequest(String requestId) {
-        return requestStorage.getRequest(requestId);
+    private void sendSubTaskToQueue(CrackTask task, CrackSubTask chunk) {
+        WorkerTaskRequest workerTaskReq = WorkerTaskRequest.builder()
+                .requestId(task.getRequestId())
+                .hash(task.getHash())
+                .alphabet(task.getAlphabet())
+                .maxLength(task.getMaxLength())
+                .partNumber(chunk.getPartNumber())
+                .partCount(task.getWorkerCount())
+                .build();
+        try {
+            rabbitTemplate.convertAndSend(
+                    RabbitMQConfig.WORKER_TASKS_EXCHANGE,
+                    RabbitMQConfig.WORKER_TASKS_ROUTING_KEY,
+                    workerTaskReq
+            );
+            chunk.setSentToQueue(true);
+        } catch (Exception e) {
+            chunk.setSentToQueue(false);
+        }
     }
 }
